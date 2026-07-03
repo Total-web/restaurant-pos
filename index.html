@@ -127,6 +127,28 @@ main{flex:1; overflow:hidden; background:var(--paper-dim);}
   display:flex; flex-direction:column;
   height:100%;
 }
+/* Drag handle for the mobile bottom-sheet ticket panel — hidden on desktop,
+   shown and made interactive only under the 820px breakpoint below. */
+.ticket-drag-handle{
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:9px 0 5px;
+  cursor:grab;
+  touch-action:none;
+  -webkit-tap-highlight-color:transparent;
+  flex-shrink:0;
+}
+.ticket-drag-handle .grip{
+  width:44px; height:5px; border-radius:3px;
+  background:var(--line);
+  transition:background .15s;
+}
+.ticket-drag-handle:active{cursor:grabbing;}
+.ticket-drag-handle:active .grip,
+.ticket-drag-handle[aria-expanded="true"] .grip{
+  background:var(--rust);
+}
 .ticket-head{
   padding:16px 18px 12px;
   border-bottom:1px dashed var(--line);
@@ -314,7 +336,11 @@ main{flex:1; overflow:hidden; background:var(--paper-dim);}
 
 @media (max-width:820px){
   .order-layout{flex-direction:column;}
-  .ticket{width:100%; height:46vh; border-left:none; border-top:1px solid var(--line);}
+  .ticket{
+    width:100%; height:60vh; border-left:none; border-top:1px solid var(--line);
+    border-radius:14px 14px 0 0; box-shadow:0 -4px 16px rgba(0,0,0,.08);
+  }
+  .ticket-drag-handle{display:flex;}
 
   /* Larger touch targets on phones/tablets — aim for ~44px minimum per platform guidance */
   nav.tabs{gap:0; overflow-x:auto; -webkit-overflow-scrolling:touch;}
@@ -327,8 +353,15 @@ main{flex:1; overflow:hidden; background:var(--paper-dim);}
   .picker-row select{padding:13px 12px; font-size:16px;} /* 16px avoids iOS auto-zoom on focus */
   .picker-row .add-btn{padding:13px 18px;}
   .field input, .field select{padding:12px 10px; font-size:16px;}
-  .table-field input{padding:10px 9px;}
+  .table-field input{padding:10px 9px; font-size:16px;} /* 16px avoids iOS auto-zoom on focus */
   .menu-row button{padding:8px 14px; font-size:13px;}
+
+  /* Reclaim vertical space in the "add menu" catalog now that the ticket
+     sheet defaults to a smaller collapsed height (see .ticket above). */
+  .catalog{padding:14px;}
+  .dropdown-catalog{gap:10px; max-width:none;}
+  .category-block{padding:12px 14px;}
+  .category-block .cat-title{margin-bottom:8px; font-size:17px;}
 }
 
 @media print{
@@ -361,6 +394,9 @@ main{flex:1; overflow:hidden; background:var(--paper-dim);}
           <div class="dropdown-catalog" id="dropdownCatalog"></div>
         </div>
         <div class="ticket">
+          <div class="ticket-drag-handle" id="ticketDragHandle" role="button" tabindex="0" aria-expanded="false" aria-label="Drag up or tap to expand the ticket, drag down or tap to collapse it">
+            <span class="grip"></span>
+          </div>
           <div class="ticket-head">
             <div class="num" id="ticketNum">TICKET #1</div>
             <div class="edit-banner" id="editBanner">Editing a placed order — change items below, then Update Order.</div>
@@ -611,7 +647,7 @@ main{flex:1; overflow:hidden; background:var(--paper-dim);}
 
 <script>
 /* ===================== Storage ===================== */
-const STORAGE_KEYS = { menu:'pos_menu', settings:'pos_settings', orders:'pos_orders', current:'pos_current', counter:'pos_counter', currentTable:'pos_currentTable', editing:'pos_editing', expenses:'pos_expenses', counterDate:'pos_counterDate' };
+const STORAGE_KEYS = { menu:'pos_menu', settings:'pos_settings', orders:'pos_orders', current:'pos_current', counter:'pos_counter', currentTable:'pos_currentTable', editing:'pos_editing', expenses:'pos_expenses', counterDate:'pos_counterDate', ticketExpanded:'pos_ticketExpanded' };
 
 function load(key, fallback){
   try{
@@ -945,6 +981,66 @@ function syncTableInput(){
   document.getElementById('tableNoInput').value = currentTable;
 }
 
+/* ===================== Ticket bottom sheet (mobile) =====================
+   On phones the ticket sits below the catalog and defaults to a compact
+   height so there's room to browse/add items. The grip handle can be
+   dragged up/down to resize it, or tapped to snap between collapsed and
+   expanded. This only takes effect under the 820px breakpoint — on desktop
+   the ticket is a fixed sidebar and inline height is left untouched. */
+const ticketEl = document.querySelector('.ticket');
+const ticketHandle = document.getElementById('ticketDragHandle');
+const MOBILE_MQ = window.matchMedia('(max-width:820px)');
+const TICKET_MIN_VH = 30;   // collapsed — leaves most of the screen for the catalog
+const TICKET_MAX_VH = 86;   // expanded — nearly full screen, header stays visible
+let ticketExpanded = load(STORAGE_KEYS.ticketExpanded, true);
+let ticketDrag = null;
+
+function applyTicketHeight(vh, withTransition){
+  if(!MOBILE_MQ.matches){ ticketEl.style.height = ''; ticketEl.style.transition = ''; return; }
+  ticketEl.style.transition = withTransition ? 'height .22s ease' : 'none';
+  ticketEl.style.height = vh + 'vh';
+}
+function setTicketExpanded(expanded, withTransition){
+  ticketExpanded = expanded;
+  applyTicketHeight(expanded ? TICKET_MAX_VH : TICKET_MIN_VH, withTransition !== false);
+  save(STORAGE_KEYS.ticketExpanded, ticketExpanded);
+  ticketHandle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+}
+
+ticketHandle.addEventListener('pointerdown', (e)=>{
+  if(!MOBILE_MQ.matches) return;
+  ticketDrag = { startY: e.clientY, startHeightPx: ticketEl.getBoundingClientRect().height, moved:false };
+  ticketHandle.setPointerCapture(e.pointerId);
+});
+ticketHandle.addEventListener('pointermove', (e)=>{
+  if(!ticketDrag || !MOBILE_MQ.matches) return;
+  const dy = ticketDrag.startY - e.clientY; // dragging up increases height
+  if(Math.abs(dy) > 4) ticketDrag.moved = true;
+  const minPx = window.innerHeight * TICKET_MIN_VH / 100;
+  const maxPx = window.innerHeight * TICKET_MAX_VH / 100;
+  const newHeightPx = Math.min(maxPx, Math.max(minPx, ticketDrag.startHeightPx + dy));
+  ticketEl.style.transition = 'none';
+  ticketEl.style.height = newHeightPx + 'px';
+});
+function endTicketDrag(e){
+  if(!ticketDrag) return;
+  const moved = ticketDrag.moved;
+  ticketDrag = null;
+  if(!MOBILE_MQ.matches) return;
+  if(!moved){
+    setTicketExpanded(!ticketExpanded);
+    return;
+  }
+  const currentVh = (ticketEl.getBoundingClientRect().height / window.innerHeight) * 100;
+  setTicketExpanded(currentVh > (TICKET_MIN_VH + TICKET_MAX_VH) / 2);
+}
+ticketHandle.addEventListener('pointerup', endTicketDrag);
+ticketHandle.addEventListener('pointercancel', endTicketDrag);
+ticketHandle.addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); setTicketExpanded(!ticketExpanded); }
+});
+MOBILE_MQ.addEventListener('change', ()=> setTicketExpanded(ticketExpanded, false));
+
 document.getElementById('clearOrder').addEventListener('click', ()=>{
   if(editingOrderId){
     showConfirm('Cancel edit?', 'Discard these changes and leave the original order untouched?', ()=>{
@@ -1031,6 +1127,7 @@ function startEditOrder(o){
   renderTicket();
   syncTableInput();
   goToView('order');
+  setTicketExpanded(false); // give the catalog room to add items; drag/tap the handle to review the ticket
   toast(`Editing Order #${o.number} — add/remove items, then Update Order`);
 }
 
@@ -1628,6 +1725,7 @@ ensureCounterForToday();
 renderDropdownCatalog();
 renderTicket();
 syncTableInput();
+setTicketExpanded(ticketExpanded, false);
 
 // Register service worker so the app keeps working offline once loaded.
 // Only works over http://localhost or https:// — silently skipped otherwise
