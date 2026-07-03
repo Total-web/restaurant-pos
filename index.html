@@ -990,15 +990,37 @@ function syncTableInput(){
 const ticketEl = document.querySelector('.ticket');
 const ticketHandle = document.getElementById('ticketDragHandle');
 const MOBILE_MQ = window.matchMedia('(max-width:820px)');
-const TICKET_MIN_VH = 30;   // collapsed — leaves most of the screen for the catalog
+const TICKET_MIN_VH = 15;   // collapsed — leaves most of the screen for the catalog
 const TICKET_MAX_VH = 86;   // expanded — nearly full screen, header stays visible
+const TICKET_LINES_MIN_PX = 110; // collapsed sheet must always leave at least this much room for order items
 let ticketExpanded = load(STORAGE_KEYS.ticketExpanded, true);
 let ticketDrag = null;
+
+/* The drag handle, header (with table field/edit banner), totals block, and
+   action buttons are all fixed-size "chrome" around the scrollable item list.
+   On short screens 30vh can be smaller than that chrome alone, which squeezes
+   .ticket-lines down to 0px and hides the items entirely. We measure the
+   actual chrome height and make sure the collapsed sheet is always at least
+   chrome + TICKET_LINES_MIN_PX tall, so the item list stays visible. */
+function getTicketChromeHeight(){
+  const head = ticketEl.querySelector('.ticket-head');
+  const totals = ticketEl.querySelector('.ticket-totals');
+  const actions = ticketEl.querySelector('.ticket-actions');
+  return [ticketHandle, head, totals, actions].reduce((sum, el) => sum + (el ? el.offsetHeight : 0), 0);
+}
+
+function getTicketMinPx(){
+  const chromeAndListMin = getTicketChromeHeight() + TICKET_LINES_MIN_PX;
+  const maxPx = window.innerHeight * TICKET_MAX_VH / 100;
+  return Math.min(chromeAndListMin, maxPx);
+}
 
 function applyTicketHeight(vh, withTransition){
   if(!MOBILE_MQ.matches){ ticketEl.style.height = ''; ticketEl.style.transition = ''; return; }
   ticketEl.style.transition = withTransition ? 'height .22s ease' : 'none';
-  ticketEl.style.height = vh + 'vh';
+  const vhPx = window.innerHeight * vh / 100;
+  const heightPx = Math.max(vhPx, getTicketMinPx());
+  ticketEl.style.height = heightPx + 'px';
 }
 function setTicketExpanded(expanded, withTransition){
   ticketExpanded = expanded;
@@ -1016,7 +1038,7 @@ ticketHandle.addEventListener('pointermove', (e)=>{
   if(!ticketDrag || !MOBILE_MQ.matches) return;
   const dy = ticketDrag.startY - e.clientY; // dragging up increases height
   if(Math.abs(dy) > 4) ticketDrag.moved = true;
-  const minPx = window.innerHeight * TICKET_MIN_VH / 100;
+  const minPx = getTicketMinPx();
   const maxPx = window.innerHeight * TICKET_MAX_VH / 100;
   const newHeightPx = Math.min(maxPx, Math.max(minPx, ticketDrag.startHeightPx + dy));
   ticketEl.style.transition = 'none';
